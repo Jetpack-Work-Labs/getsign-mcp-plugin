@@ -1,0 +1,37 @@
+# Runs on every push and pull request. Catches a manifest error before it ships,
+# but note the scope: this only validates plugin.json/marketplace.json shape and
+# skill/agent/command file structure. It does NOT check the .mcp.json server
+# config or that skill steps reference real tool names — that's
+# test_every_skill_step_is_a_registered_tool's job, and it lives in the private
+# getsign-mcp-server repo, not here.
+
+name: Validate plugin
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: claude plugin validate --strict
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Validate plugin manifest
+        run: claude plugin validate ./plugins/getsign --strict
+
+      - name: Validate marketplace manifest
+        run: claude plugin validate . --strict
