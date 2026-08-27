@@ -1,0 +1,15 @@
+{
+  "name": "getsign",
+  "description": "Jetpack Work Labs plugins for monday.com — e-signatures and agentic QA.",
+  "owner": {
+    "name": "Jetpack Work Labs",
+    "email": "support@getsign.io"
+  },
+  "plugins": [
+    {
+      "name": "getsign",
+      "source": "./plugins/getsign",
+      "description": "Send documents for signature from monday.com boards in plain language. Upload and map a new document, onboard an account that has never installed GetSign, and chase who still hasn't signed — every step in the order the GetSign API actually requires. Built on the official GetSign MCP server."
+    }
+  ]
+}

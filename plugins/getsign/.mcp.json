@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "getsign": {
+      "type": "http",
+      "url": "https://mcp.getsign.io/mcp"
+    }
+  }
+}

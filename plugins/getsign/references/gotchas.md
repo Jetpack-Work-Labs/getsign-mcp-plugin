@@ -1,0 +1,59 @@
+# Gotchas
+
+Distilled from hands-on agent sessions. Keep in sync with repo `CLAUDE.md` when learning new ones. Remote/dev MCP clients should `getsign_help(path="gotchas")` at the start of multi-step work — they do not get local `CLAUDE.md`.
+
+1. **Default create is board-only** — `getsign_create_workflow` needs only `board_id` and `workflow_name`; never require or ask for an item.
+
+2. **Item context defaults to absent for workflow creation and document attachment.** `getsign_create_workflow`, `getsign_select_template_for_workflow`, and `getsign_duplicate_template_for_workflow` all work without an `item_id` (the latter two attach at the workflow level when `item_id` is omitted). Only bring `item_id` into a call at a genuinely item-specific step: mapping fields or sending.
+
+3. **`getsign_create_template` is a two-call presigned upload, not a one-shot base64 tool.** Call 1 (`file_name`+`content_type`, no `storage_key`) returns a presigned PUT `url` + `storage_key`; PUT the raw file from disk (`curl -X PUT --data-binary @path -H "Content-Type: <type>"`, or `curl -T path` — see 3b, it must be a PUT), then call 2 with the same args plus `storage_key` to register it. Without `envelope_id`+`item_id` on call 2 the template is left unattached — call `getsign_select_template_for_workflow`, or pass both at call 2 to auto-attach.
+
+3a. **A PUT that never leaves the client dead-ends the upload, and there is no way around it from inside MCP.** *(First rule out a malformed request — see 3b. This gotcha is only about the PUT never leaving the client.)* `getsign_create_template`'s call 1 hands back a presigned URL the *client* must PUT the bytes to — a hop that has nothing to do with MCP. In a sandboxed or restricted-egress environment the PUT is blocked before it leaves (a proxy 403 on the CONNECT, so the storage host is never even reached), and calling `getsign_create_template` again with `storage_key` then fails with `The specified key does not exist` because no bytes ever arrived. That second error is misleading: nothing is wrong with the key. There is **no base64-over-MCP fallback** — a `getsign_upload_template_file` tool existed for exactly this and was removed on 2026-08-26, because the clients that cannot PUT also cannot produce a faithful base64 of a real file: a blob emitted token by token truncates, and a truncated payload is a corrupt document. If the PUT genuinely cannot leave, the file has to reach storage from somewhere that can make the request — a local shell, or a human uploading through the GetSign UI.
+
+3b. **A presigned PUT is a PUT, carries `Content-Type` and nothing else, and its `x-amz-checksum-crc32` needs no action from you.** Verified against dev 2026-08-26. `data.url` is signed for `PutObject` with `host` as its only signed header, while AWS SDK v3 hoists `x-amz-checksum-crc32` (the CRC32 of an *empty* body) and `x-amz-sdk-checksum-algorithm=CRC32` into the query string. Three outcomes, and only the first uploads anything:
+
+- `curl -X PUT --data-binary @path -H "Content-Type: <type>" "<data.url>"` → **200**. `curl -T path "<data.url>"` works too.
+- the same command **without `-X PUT`** → **403 `SignatureDoesNotMatch`**: `--data-binary` on its own makes curl send a POST, and the signature covers PUT. The error body's `<CanonicalRequest>` opens with `POST`, which is the tell.
+- a correctly computed `x-amz-checksum-crc32` **header** added on top → **403 `AccessDenied — There were headers present in the request which were not signed`**.
+
+So never compute the checksum and never add an `x-amz-*` header — the one in the query string is already signed and is not asking you for anything. Always keep the failure body (never `-o /dev/null`): a bare `403` looks the same in all three cases, and reading the wrong-verb one as blocked egress (3a) drives you into a fallback that no longer exists (3a), spending the model's context on a file a corrected one-line PUT would have uploaded.
+
+4. **Signers come only from existing board columns.** `emails` on the send tools is copy-only, never a signer. `getsign_save_placeholders` can stamp a real signer, but only onto an email/people/mirror-email-column column that already exists (`getsign_monday_item` returns `signer_columns` / `emailColumn`; save also attaches those lists when called without an assignee) — no raw email address as signer via API.
+
+5. **Board view tabs** — use `getsign_ensure_board_view` only; never Monday `create_view` with hardcoded feature ids. Priority trigger is board context, not workflow creation: fire it as soon as a board is given/picked for signing, not after `getsign_create_workflow` returns its `next_tool` hint (that hint is only a fallback breadcrumb). It's idempotent, so calling it early is always safe. Still gate on signing intent, not mere browsing. `app_feature_id` is set once at creation — a misconfigured view must be deleted and recreated, not repaired.
+
+6. **Surface a workflow's default settings on create/fetch** (reminders, OTP, approval rules, sender identity, etc.) and ask before changing, rather than silently proceeding on defaults the user never saw.
+
+7. **Feature toggles are optional** — do not force Share & Track / signature collection / generate on; none are required to send.
+
+7a. **Sign anywhere** — enabling it is `getsign_update_workflow_settings` (no dedicated tool) with `signatureCollection.isEnabled=true`, `enableSignAnywhere=true`, `fileColumnId` (signed docs File column), `statusColumnId` (workflow status/track column), and `emailColumn` (one or more `{id, type, title}`; `id` is `emailColumnId`). Call `getsign_monday_item`, present **every** returned email/people/mirror-email column (`signer_columns` / `emailColumn`), and let the user pick a single column or multiple — do not auto-pick. Discover file/status via the same tool's `status_columns` / `file_columns`. Do not send `enableSignAnywhere` alone.
+
+7b. **Use stored document** — `getsign_update_workflow_settings` with `useFileColumn=true` and `presignedFileColumnId` set to a File-type column (from `getsign_monday_item`'s `file_columns`). Never send `useFileColumn` without `presignedFileColumnId`. Once on, an item's signing document comes straight from whatever file sits in that column — upload it there directly (e.g. the Monday item's File column) rather than through `getsign_create_template`; there's no template-attach step for this path, and `getsign_list_envelope_documents` picks the file up automatically once it's present.
+
+7c. **useFileColumn / Monday file ids need ingest before detect** — `getsign_list_envelope_documents` can return a synthetic `fileId` for a Monday column asset that has **no GetSign S3 key yet**. `getsign_detect_placeholders_ai` auto-ingests when you pass `envelope_id` (workflow id) + `item_id` via `POST /files/find-or-create/with-rendered-string` (same as opening the PDF editor). Always pass both for item-scoped detect; without `envelope_id` ingest is skipped and detect can fail with `File not found or has no storage key`.
+
+8. **AI detection does not persist** — always run `getsign_save_placeholders` (the save tool `next_tool` points to) before opening the editor.
+
+8a. **Never hand-author the `placeholders` array passed to the save tools.** Always call `getsign_detect_placeholders_ai` first and pass its `data.placeholders` through unmodified (only `field_assignments` is yours to add) — do not guess `x`/`y`/`width`/`height` from where boxes were drawn on a generated PDF. The wire shape has two separate coordinate fields (`formField.coordinates`, bottom-up native PDF points, vs. `placeholder`, the same point top-down) that the save route never cross-checks, so a hand-typed placeholder is accepted with no error but silently fails to render in the editor and fails to resolve any signer in `getsign_get_signer_data` — it looks successful and only breaks downstream at send. No PDF to detect against, or the user wants manual control → use the editor instead.
+
+9. **Template-level is the default** for save/editor flags; item-level only on explicit user request.
+
+10. **Multi-signer apply** — one call per signer with that signer's placeholders only. Do not resubmit the full detected array with a new `assignee_column_id` expecting it to only touch one field.
+
+11. **Trust `tools/list`** over memory or a README catalog list. Parked helpers (`getsign_get_next_step`, `getsign_create_or_copy_signing_link`, `getsign_get_individual_signing_link`) are not public.
+
+12. **Completion** — after send/complete, offer tracking/audit via `getsign_status` (`action=history` and `action=activity`), not only a download link.
+
+13. **No Monday status writeback** in GetSign MCP — use a Monday connector if the user needs status column updates.
+
+14. **Auth vs install** — a working session token is not proof the Monday app is installed. Use `getsign_account` `action=install_state`; `action=status` only means a token is configured. Installing ≠ authorizing: OAuth must complete after install. Prefer `getsign_connect` over pasting tokens. `getsign_connect` opens a browser itself — URL fixes must happen inside the tool, not in chat after the fact.
+
+15. **Edit vs AI map** — when the user asks to edit/map fields, offer both the manual editor and AI detect→save; do not silently pick one. For AI: detect → save (`next_tool`) → then open the matching editor to review. Never jump detect → editor (fields are not persisted yet).
+
+16. **Hosted confirmation** — on hosted/dev MCP, gated mutations may return `CONFIRMATION_REQUIRED` + `confirm_token`. Retry with the same args plus that token; do not invent one.
+
+## Related
+
+- `getsign_help(path="placeholders-and-signers")`
+- `getsign_help(path="settings-and-plans")`
+- `getsign_help(path="tool-index")`
