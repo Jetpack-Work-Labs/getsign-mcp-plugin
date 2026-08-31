@@ -12,12 +12,10 @@ allowed-tools:
   - mcp__getsign__getsign_ensure_board_view
   - mcp__plugin_getsign_getsign__getsign_create_workflow
   - mcp__getsign__getsign_create_workflow
-  - mcp__plugin_getsign_getsign__getsign_get_editor_url
-  - mcp__getsign__getsign_get_editor_url
+  - mcp__plugin_getsign_getsign__getsign_get_document_url
+  - mcp__getsign__getsign_get_document_url
   - mcp__plugin_getsign_getsign__getsign_get_signer_data
   - mcp__getsign__getsign_get_signer_data
-  - mcp__plugin_getsign_getsign__getsign_get_preview_url
-  - mcp__getsign__getsign_get_preview_url
   - mcp__plugin_getsign_getsign__getsign_send_signature_request
   - mcp__getsign__getsign_send_signature_request
   - mcp__plugin_getsign_getsign__getsign_status
@@ -102,7 +100,7 @@ egress dies at the proxy's CONNECT and never reaches AWS at all.
 Once the document is attached it has no signature fields yet. There are two ways
 to add them, and the user should choose:
 
-- **Manual** — `getsign_get_editor_url` opens the PDF editor and they drag
+- **Manual** — `getsign_get_document_url(action="edit")` opens the PDF editor and they drag
   fields where they want them.
 - **AI-assisted** — `getsign_detect_placeholders_ai` finds the likely fields,
   then `getsign_save_placeholders` persists them.
@@ -117,7 +115,7 @@ hand-author `x`/`y`/`width`/`height` — the save route accepts a malformed
 placeholder without complaint, and it then fails to render and fails to resolve
 a signer.
 
-Keep `edit_template` on `getsign_get_editor_url` consistent with
+Keep `edit_template` on `getsign_get_document_url(action="edit")` consistent with
 `is_template_update` on `getsign_save_placeholders`. Both default to
 template-level, which propagates to every item using that template; pass `false`
 on both only when the user explicitly wants the change confined to one item.
@@ -134,34 +132,31 @@ new column each time.
    - failures: storage_key from call 1 must be reused verbatim in call 2 — it names the S3 object the PUT just wrote to. Skipping the PUT step (or PUT-ing to the wrong url) makes call 2 register a template pointing at empty/missing content with no error at either step.
 2. `getsign_list_workflows_for_board`
    - requires `board_id`
-   - next `getsign_ensure_board_view`, `getsign_create_workflow`, `getsign_get_workflow`
+   - next `getsign_get_workflow`, `getsign_ensure_board_view`, `getsign_create_workflow`
 3. `getsign_ensure_board_view`
    - requires `board_id`
    - next `getsign_list_workflows_for_board`, `getsign_get_workflow`
    - failures: Needs a live AppFeatureBoardView named 'getsign board view' on the installed GetSign app version, and Monday scopes that allow creating board views.
 4. `getsign_create_workflow`
+   - **conditional — ask before calling this when a workflow already exists.** The `getsign_list_workflows_for_board` step above is a branch, not a formality: if it returned any workflow, do NOT silently reuse one and do NOT silently call this tool either. Present the existing workflow(s) (name + `envelope_id`) alongside a 'create a new workflow' option and ask the user to choose — call `getsign_get_workflow` on any they're considering to surface its settings first. Only call this tool if the user picks create; every call creates a brand-new envelope on the board with no dedup by name, so calling it unasked litters the board with duplicate workflows. Call it directly, without asking, only when the list came back empty.
    - requires `board_id`, `workflow_name`
    - next `getsign_ensure_board_view`, `getsign_select_template_for_workflow`, `getsign_get_workflow`
    - failures: MISSING_WORKFLOW_NAME: workflow_name was blank or whitespace-only, so nothing was created. Ask the user what to name the workflow — don't pick one yourself — then retry. The name shows on the monday board, so suggest the source document or agreement type (e.g. 'NDA - Acme Corp').
-5. `getsign_get_editor_url`
-   - requires `envelope_id + item_id, or template_id + file_id`, `optional file_id on item`, `optional edit_template`
+5. `getsign_get_document_url`
+   - requires `action=edit or action=preview`, `envelope_id + item_id, or template_id + file_id`, `optional file_id on item`, `optional edit_template only for action=edit`
    - next `getsign_detect_placeholders_ai`, `getsign_get_signer_data`, `getsign_send_signature_request`
-   - failures: Requires GETSIGN_APPLICATION_URL and a connected user session. Rejects both ID shapes or neither. If no item documents exist, attach or generate a document first.
+   - failures: Requires GETSIGN_APPLICATION_URL and a connected user session. Rejects an unknown action, both ID shapes, neither ID shape, and edit_template on preview. If no item document exists, attach or generate one first.
 6. `getsign_get_signer_data`
    - requires `envelope_id`, `item_id`
-   - next `getsign_send_signature_request`, `getsign_get_editor_url`
-7. `getsign_get_preview_url`
-   - requires `envelope_id + item_id, or template_id + file_id`, `optional file_id on item`
-   - next `getsign_send_signature_request`, `getsign_get_editor_url`
-   - failures: Requires GETSIGN_APPLICATION_URL and a connected user session. If already fully signed, refuses with next_tool=getsign_download_signed_documents.
-8. `getsign_send_signature_request`
+   - next `getsign_send_signature_request`, `getsign_get_document_url`
+7. `getsign_send_signature_request`
    - requires `envelope_id`, `item_id`
    - next `getsign_status`, `getsign_status`, `getsign_get_signer_data`
-   - failures: CONFIRMATION_REQUIRED: show summary_text, then re-call with confirm=true and confirmation_token (same params). INVALID_CONFIRMATION_TOKEN: start over without confirm. MISSING_SIGNATURE_FIELDS: response includes next_tool=getsign_get_editor_url — call it and share the editor URL.
-9. `getsign_status`
+   - failures: CONFIRMATION_REQUIRED: show summary_text, then re-call with confirm=true and confirmation_token (same params). INVALID_CONFIRMATION_TOKEN: start over without confirm. MISSING_SIGNATURE_FIELDS: response includes next_tool=getsign_get_document_url with action=edit — call it and share the editor URL.
+8. `getsign_status`
    - requires `envelope_id+item_id for history, or board_id for board actions`
    - next `getsign_download_signed_documents`, `getsign_generate_signing_link`
-10. `getsign_download_signed_documents`
+9. `getsign_download_signed_documents`
    - requires `envelope_id`, `item_id`
    - next `getsign_status`
    - failures: Fails if signing is not complete, no signed documents exist, or the signed snapshot is not ready yet. Links expire quickly and must not be shared publicly.

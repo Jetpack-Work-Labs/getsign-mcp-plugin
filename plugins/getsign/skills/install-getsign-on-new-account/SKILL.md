@@ -105,12 +105,13 @@ broken link — route it to an admin.
    - failures: If auth is missing, preflight does not call authenticated backend routes and returns getsign_connect as the next step. installed is tri-state — null means not known. Never infer install state from action=status or a successful /account.
 4. `getsign_list_workflows_for_board`
    - requires `board_id`
-   - next `getsign_ensure_board_view`, `getsign_create_workflow`, `getsign_get_workflow`
+   - next `getsign_get_workflow`, `getsign_ensure_board_view`, `getsign_create_workflow`
 5. `getsign_ensure_board_view`
    - requires `board_id`
    - next `getsign_list_workflows_for_board`, `getsign_get_workflow`
    - failures: Needs a live AppFeatureBoardView named 'getsign board view' on the installed GetSign app version, and Monday scopes that allow creating board views.
 6. `getsign_create_workflow`
+   - **conditional — ask before calling this when a workflow already exists.** The `getsign_list_workflows_for_board` step above is a branch, not a formality: if it returned any workflow, do NOT silently reuse one and do NOT silently call this tool either. Present the existing workflow(s) (name + `envelope_id`) alongside a 'create a new workflow' option and ask the user to choose — call `getsign_get_workflow` on any they're considering to surface its settings first. Only call this tool if the user picks create; every call creates a brand-new envelope on the board with no dedup by name, so calling it unasked litters the board with duplicate workflows. Call it directly, without asking, only when the list came back empty.
    - requires `board_id`, `workflow_name`
    - next `getsign_ensure_board_view`, `getsign_select_template_for_workflow`, `getsign_get_workflow`
    - failures: MISSING_WORKFLOW_NAME: workflow_name was blank or whitespace-only, so nothing was created. Ask the user what to name the workflow — don't pick one yourself — then retry. The name shows on the monday board, so suggest the source document or agreement type (e.g. 'NDA - Acme Corp').
@@ -122,8 +123,9 @@ idempotent and safe to call early, so do not wait until a workflow exists. Gate
 it on actual signing intent though: it writes a visible tab, and stamping one
 onto a board the user is only browsing is noise.
 
-Check `getsign_list_workflows_for_board` before creating anything. If a workflow
-already exists and the user is happy with it, reuse its id.
+Check `getsign_list_workflows_for_board` before creating anything. If a
+workflow already exists, ask the user whether to reuse it or create a new
+one — present both options rather than picking for them.
 
 Creating a workflow needs the board only — never ask for an item to get one.
 
