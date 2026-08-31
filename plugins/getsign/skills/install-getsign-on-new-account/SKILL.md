@@ -136,8 +136,8 @@ Summarize the ones a sender would care about and ask whether they want anything
 changed before moving on. Do not proceed silently on defaults the user never
 saw.
 
-The feature toggles — Generate document, Signature collection, Share and track,
-Form filler — are **optional and off by default**. A workflow with all of them
+The feature toggles — Generate document, Signature collection, Share and track
+— are **optional and off by default**. A workflow with all of them
 off is complete and can send. Present them as options if asked; do not turn one
 on unprompted and do not tell the user they need one to send.
 

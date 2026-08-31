@@ -73,14 +73,56 @@ its own logo or sender independent of the account has to override.
 
 ## Feature toggles are optional
 
-Generate document, Signature collection, Share and track, and Form filler are
-**off by default and are not prerequisites for sending**. A workflow with all
-four off can attach a document, map fields, resolve a signer, and send.
+Generate document, Signature collection, and Share and track are **off by
+default and are not prerequisites for sending**. A workflow with all three off
+can attach a document, map fields, resolve a signer, and send.
 
-They add monday-side automation — status-triggered generation, shareable links,
-writing status and signed files back to board columns — and nothing more. Offer
-them; never enable one on the user's behalf, and never tell them a toggle is
-required "to actually send", because it is not.
+Each one adds monday-side automation and nothing more. Offer them; never enable
+one on the user's behalf, and never tell them a toggle is required "to actually
+send", because it is not.
+
+### Generate document — `generateDocument`
+
+Builds the document for you from the workflow's attached template, filling it
+with that item's monday column values, and drops the result into a File column.
+It fires on a monday webhook: when the status column you nominate reaches the
+label you nominate, generation runs for that item.
+
+Send as a group: `statusColumnId`, `statusColumnLabel` (the status *value* that
+fires it, not the column title), `outputColumnId` (File column the result lands
+in), `outputFileType` (`pdf` or `docx`). Optional `documentNamingEnabled` +
+`documentNameTemplate` build the filename from static text and column values.
+
+This is generation, not signing — it produces a filled document whether or not
+anyone ever signs it.
+
+### Signature collection — `signatureCollection`
+
+The monday writeback half of signing: **this is the feature that saves the
+signed PDF into a board File column.** When a signing process completes, the
+backend uploads the signed file to `fileColumnId` on that item by itself, and
+tracks the signing steps against `statusColumnId`. No tool call, no monday
+connector.
+
+Send as a group: `isEnabled`, `fileColumnId` (where signed files land),
+`statusColumnId` (the workflow status/track column).
+
+**Sign anywhere** (`enableSignAnywhere`) is a sub-option *inside* this feature,
+not a feature of its own and not what performs the file write. It lets a
+document go out for signature without predefined signature pads — the signer
+places their own signature rather than filling placeholders you mapped in
+advance. It requires signature collection to be on, plus `emailColumn` (one or
+more `{id, type, title}`) naming the receiver columns. Never send
+`enableSignAnywhere` on its own, and never describe it as the setting that
+files the signed document.
+
+### Share and track — `shareAndTrack`
+
+Turns the signing invitation into a shareable link and tracks it on the board,
+optionally writing progress to `statusColumnId` / `outputColumnId`. Two
+sub-options: `isInvitationExpiryEnabled` + `expiryInMinutes` expire the link
+after a set time, and `isEmailVerificationEnabled` makes a recipient verify
+their email before the document opens.
 
 ## Steps
 
@@ -106,12 +148,12 @@ required "to actually send", because it is not.
 6. `getsign_update_workflow_settings`
    - requires `workflow_id`
    - next `getsign_get_workflow`, `getsign_monday_item`, `getsign_list_envelope_documents`
-   - failures: The tool fetches the current envelope config and deep-merges the given settings into it before sending, since the backend replaces the whole config rather than merging on its own. Only send the fields you want to change; existing sections are preserved automatically. Agents should still inspect board/item columns before proposing column ids. When enabling generateDocument, statusColumnId, statusColumnLabel, outputColumnId, and outputFileType ("pdf" or "docx") are all required together. Do NOT auto-pick these columns — even when only one status or file column exists. First call getsign_monday_item (status_columns with trigger labels, file_columns), then ask the user to explicitly choose the trigger status column (and which label fires generation) and the output file column before writing the config; only outputFileType may carry a suggested default. When enabling Sign anywhere, signatureCollection.isEnabled, enableSignAnywhere, fileColumnId (signed docs File column), and statusColumnId (workflow status/track column) are required together, plus emailColumn (one or more receiver columns). Call getsign_monday_item, present every returned email/people/mirror-email column (signer_columns / emailColumn), and let the user select a single column or multiple; copy the chosen emailColumn entries ({id, type, title}, id is emailColumnId). Reuse the same getsign_monday_item status_columns / file_columns. Do not send enableSignAnywhere alone and do not auto-pick columns. When enabling Use stored document, useFileColumn and presignedFileColumnId must be sent together; pick presignedFileColumnId from getsign_monday_item's file_columns rather than guessing. logo_key attaches a previously uploaded storage key; remove_email_logo=true clears the current logo and deletes the storage object. Do not send both. settings may be omitted when only attaching or removing a logo.
+   - failures: The tool fetches the current envelope config and deep-merges the given settings into it before sending, since the backend replaces the whole config rather than merging on its own. Only send the fields you want to change; existing sections are preserved automatically. Agents should still inspect board/item columns before proposing column ids. When enabling generateDocument, statusColumnId, statusColumnLabel, outputColumnId, and outputFileType ("pdf" or "docx") are all required together. Do NOT auto-pick these columns — even when only one status or file column exists. First call getsign_monday_item (status_columns with trigger labels, file_columns), then ask the user to explicitly choose the trigger status column (and which label fires generation) and the output file column before writing the config; only outputFileType may carry a suggested default. When enabling signature collection, signatureCollection.isEnabled, fileColumnId (signed docs File column), and statusColumnId (workflow status/track column) are required together — that combination is what makes the backend upload the signed PDF to the File column. Sign anywhere is a sub-option: enableSignAnywhere also needs those same three fields plus emailColumn (one or more receiver columns). Call getsign_monday_item, present every returned email/people/mirror-email column (signer_columns / emailColumn), and let the user select a single column or multiple; copy the chosen emailColumn entries ({id, type, title}, id is emailColumnId). Reuse the same getsign_monday_item status_columns / file_columns. Do not send enableSignAnywhere alone and do not auto-pick columns. When enabling Use stored document, useFileColumn and presignedFileColumnId must be sent together; pick presignedFileColumnId from getsign_monday_item's file_columns rather than guessing. logo_key attaches a previously uploaded storage key; remove_email_logo=true clears the current logo and deletes the storage object. Do not send both. settings may be omitted when only attaching or removing a logo.
 
 ## Changing settings
 
 Every change is `getsign_update_workflow_settings`. There is no per-setting
-tool — not for Sign anywhere, not for stored documents.
+tool — not for signature collection, not for stored documents.
 
 The tool fetches the current config and deep-merges your patch into it, because
 the backend replaces the whole config rather than merging. So send only the
@@ -128,10 +170,13 @@ Some settings must be sent as a complete group or the backend rejects them:
 - **Generate document** — `statusColumnId`, `statusColumnLabel`,
   `outputColumnId`, `outputFileType` (`pdf` or `docx`). `statusColumnLabel` is
   the status *value* that fires generation, not the column title.
-- **Sign anywhere** — `signatureCollection.isEnabled`, `enableSignAnywhere`,
-  `fileColumnId` (where signed docs land), `statusColumnId`, and `emailColumn`
-  (one or more `{id, type, title}`; `id` is the column id). Never send
-  `enableSignAnywhere` on its own.
+- **Signature collection** — `signatureCollection.isEnabled`, `fileColumnId`
+  (where signed docs land), `statusColumnId`. Adding **Sign anywhere** on top
+  means `enableSignAnywhere` plus `emailColumn` (one or more
+  `{id, type, title}`; `id` is the column id) in the same call. Never send
+  `enableSignAnywhere` on its own — it is a sub-option of signature
+  collection, and it is signature collection, not Sign anywhere, that writes
+  the signed file to `fileColumnId`.
 - **Use stored document** — `useFileColumn` and `presignedFileColumnId`
   together, never one alone. See the `sign-from-file-column` skill for what
   that path looks like end to end.
@@ -158,9 +203,9 @@ Two refusals are normal here and neither should be retried:
   workflow has no such gate, but *updating* one does. If the user is not an
   owner of that monday board, no argument change will help; a board owner has to
   make the change or add them as an owner.
-- **`403` — plan limits.** OTP enforcement, email branding logos, form filler,
-  digital signature, share-and-track links, template-gallery permissions, and
-  multiple templates per workflow are each gated by the account's plan. Report
+- **`403` — plan limits.** OTP enforcement, email branding logos, digital
+  signature, share-and-track links, template-gallery permissions, and multiple
+  templates per workflow are each gated by the account's plan. Report
   it as a product limit and offer the path that does not need it.
 
 A `400` saying the sender email domain does not match the verified domain means

@@ -1,6 +1,6 @@
 ---
 name: "save-signed-document-to-file-column"
-description: "Save a signed document into a monday.com File column: check whether the workflow's Sign anywhere or Generate document settings already do this automatically, and if not, download the signed PDF and hand it off to a connected monday API tool to attach it to the item's File column. Use when someone says: 'save the signed document in the files column'; 'save this to the file column'; 'attach the signed pdf to this item'; 'put the signed contract back on the board'; 'upload the signed doc to the files column'."
+description: "Save a signed document into a monday.com File column: check whether the workflow's Signature collection or Generate document settings already do this automatically, and if not, download the signed PDF and hand it off to a connected monday API tool to attach it to the item's File column. Use when someone says: 'save the signed document in the files column'; 'save this to the file column'; 'attach the signed pdf to this item'; 'put the signed contract back on the board'; 'upload the signed doc to the files column'."
 when_to_use: "Starts with `getsign_download_signed_documents`. Needs `envelope_id`, `item_id` to begin; ask for what is missing rather than guessing."
 license: "MIT"
 allowed-tools:
@@ -24,8 +24,11 @@ depends entirely on how the workflow is configured.
 Two workflow settings make GetSign's own backend write the file there, with no
 tool call needed on your part:
 
-- **Sign anywhere** (`signatureCollection.fileColumnId`) — writes the signed
-  file to that File column the moment signing completes.
+- **Signature collection** (`signatureCollection.isEnabled` +
+  `fileColumnId`) — writes the signed file to that File column the moment
+  signing completes. This is the setting that does it; Sign anywhere
+  (`enableSignAnywhere`) is a sub-option of the same feature about signing
+  without predefined signature pads, and has no bearing on the file write.
 - **Generate document** (`outputColumnId`) — writes a generated file to that
   column when a status column reaches its configured label.
 

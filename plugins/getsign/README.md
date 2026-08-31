@@ -33,7 +33,7 @@ walks the rest.
 - `/getsign:board-pending-signatures` — Find out who still hasn't signed across a monday.com board, then drill into one item's signing history and full audit trail to see where it stalled and who to chase.
 - `/getsign:create-or-update-workflow` — Create a GetSign signing workflow on a monday.com board, or change an existing one's settings — sender identity and email, reminders, OTP, document generation, signature collection, share and track, or sourcing the document from a board File column.
 - `/getsign:sign-from-file-column` — Send a document that already sits in a monday.com board File column for signature, with no GetSign template: switch the workflow to Use stored document, point it at that File column, then map the signature fields on the item's own file and send.
-- `/getsign:save-signed-document-to-file-column` — Save a signed document into a monday.com File column: check whether the workflow's Sign anywhere or Generate document settings already do this automatically, and if not, download the signed PDF and hand it off to a connected monday API tool to attach it to the item's File column.
+- `/getsign:save-signed-document-to-file-column` — Save a signed document into a monday.com File column: check whether the workflow's Signature collection or Generate document settings already do this automatically, and if not, download the signed PDF and hand it off to a connected monday API tool to attach it to the item's File column.
 
 Claude also loads these on its own when what you ask matches — you do not have
 to type the slash command.
