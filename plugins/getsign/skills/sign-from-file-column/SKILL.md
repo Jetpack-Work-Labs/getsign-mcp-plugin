@@ -90,14 +90,17 @@ not "upload it through a tool".
    - requires `envelope_id`, `scope; item_id only when scope='item'`
    - next `getsign_generate_documents`, `getsign_send_signature_request`, `getsign_detect_placeholders_ai`
 5. `getsign_detect_placeholders_ai`
+   - **item-level — pass `envelope_id` (workflow id) *and* `item_id`.** A file-column document can carry a synthetic monday asset id with no GetSign storage key yet, and both ids are what trigger ingest; without `envelope_id` detection fails with `File not found or has no storage key`, which reads like a missing file and is not one. There is no template to detect against on this path.
    - requires `file_id`, `envelope_id (workflow id) + item_id for item / useFileColumn docs`, `optional board_id`, `optional template_id`, `optional force`
    - next `getsign_monday_item`, `getsign_save_placeholders`, `getsign_get_document_url`
    - failures: Requires a connected sender session and a non-block PDF file. For item / useFileColumn docs always pass envelope_id (workflow id) + item_id so the tool can ingest the Monday asset into GetSign before detect; missing envelope_id skips ingest and can yield 'File not found or has no storage key'. AI_DETECTION_ALREADY_DONE: ask the user before force=true. Detection can take up to a few minutes; increase timeout_seconds if needed. Block-based templates are not supported. Detection only returns suggested fields — call getsign_save_placeholders to actually save them; nothing is persisted to the document until then. This is the required first step before any API field placement — never hand-author a placeholders array from guessed coordinates and pass it straight to getsign_save_placeholders; the save route accepts malformed coordinates without error, but the field then fails to render in the editor and fails to resolve a signer in getsign_get_signer_data. If the user wants manual control, use the editor instead of this tool.
 6. `getsign_save_placeholders`
+   - **item-level — pass `is_template_update=false` explicitly.** This tool defaults to `true` (template-level), which is the right default elsewhere and the wrong one here: a stored document is the item's own file and has no shared template behind it. A template-scoped save is not rejected — the backend sees the file is not pinned to a template, quietly falls back to updating just that one file, takes the template signing-order branch, and answers `Template updated successfully` — so you end up telling the user their change propagated to a shared template that does not exist. Send `envelope_id` + `item_id` + `file_id`, never a `template_id`, and say plainly that the save applies to this item.
    - requires `placeholders`, `envelope_id + item_id + file_id or template_id`, `optional field_assignments`, `optional is_template_update (item shape)`
    - next `getsign_monday_item`, `getsign_get_document_url`, `getsign_get_signer_data`
    - failures: Pass one ID shape, not both. merge=True fetches current fields first. field_assignments[].placeholder_id must match detect ids. assignee_column_type must be email/people/mirror-email-column — take ids from getsign_monday_item's signer_columns (or this tool's response when unassigned). Always call getsign_detect_placeholders_ai first and pass its data.placeholders through — hand-typed coordinates are accepted with no error but silently fail to render in the editor and fail to resolve a signer in getsign_get_signer_data (the wire shape has two coordinate conventions, formField.coordinates bottom-up vs. placeholder top-down, that this route does not cross-check). If there's no PDF to run detection on, or the user wants manual control, use the editor instead.
 7. `getsign_get_document_url`
+   - **item-level — `action=edit` with `envelope_id` + `item_id` and `edit_template=false`**, matching the save above. The two scope flags must agree, or the review opens on a different scope than the one you saved. State to the user that the editor is open on this item's document, not on a template shared with other items.
    - requires `action=edit or action=preview`, `envelope_id + item_id, or template_id + file_id`, `optional file_id on item`, `optional edit_template only for action=edit`
    - next `getsign_detect_placeholders_ai`, `getsign_get_signer_data`, `getsign_send_signature_request`
    - failures: Requires GETSIGN_APPLICATION_URL and a connected user session. Rejects an unknown action, both ID shapes, neither ID shape, and edit_template on preview. If no item document exists, attach or generate one first.
@@ -128,9 +131,28 @@ carries two coordinate systems that the save route does not cross-check, so a
 hand-typed one is accepted with no error and then fails to render in the editor
 and fails to resolve a signer.
 
-**Scope it to the item.** A file-column document belongs to one item; it is not
-a shared template. Save with the item ids rather than a `template_id`, and open
-the review editor at the same scope.
+**Everything on this path is item-level — say so out loud.** This reverses the
+usual default. `getsign_save_placeholders` defaults to `is_template_update=true`
+and `getsign_get_document_url(action="edit")` defaults to `edit_template=true`,
+which is right when a shared template is behind the document and wrong here: a
+file-column document is that item's own file. So on this path:
+
+- `getsign_detect_placeholders_ai` — `envelope_id` + `item_id`.
+- `getsign_save_placeholders` — `envelope_id` + `item_id` + `file_id`, and
+  `is_template_update=false` **explicitly**. Never a `template_id`.
+- `getsign_get_document_url` — `action=edit` with `envelope_id` + `item_id` and
+  `edit_template=false`, matching the save.
+
+Leaving the template flags at their default is not rejected, which is what makes
+it dangerous. The backend sees the file is not pinned to a template, quietly
+falls back to updating that one file, takes the template signing-order branch,
+and answers `Template updated successfully` — so the tool result tells you a
+shared template was updated when no such template exists, and you pass that on
+to the user.
+
+Tell the user which scope you are working at as you go: these edits apply to
+this item's document only, and nothing here touches a template shared with
+other items.
 
 If the user would rather place the fields by hand, `getsign_get_document_url`
 with `action="edit"` opens the editor on this document instead — offer that as
