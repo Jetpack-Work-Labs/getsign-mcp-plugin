@@ -16,6 +16,8 @@ allowed-tools:
   - mcp__getsign__getsign_get_document_url
   - mcp__plugin_getsign_getsign__getsign_get_signer_data
   - mcp__getsign__getsign_get_signer_data
+  - mcp__plugin_getsign_getsign__getsign_save_document_configuration
+  - mcp__getsign__getsign_save_document_configuration
   - mcp__plugin_getsign_getsign__getsign_send_signature_request
   - mcp__getsign__getsign_send_signature_request
   - mcp__plugin_getsign_getsign__getsign_status
@@ -103,26 +105,32 @@ to add them, and the user should choose:
 - **Manual** — `getsign_get_document_url(action="edit")` opens the PDF editor and they drag
   fields where they want them.
 - **AI-assisted** — `getsign_detect_placeholders_ai` finds the likely fields,
-  then `getsign_save_placeholders` persists them.
+  then `getsign_save_document_configuration` (`action=placeholders`) persists them.
 
 Detection saves nothing on its own. Always follow it with the save step, and
 only then open the editor to review. Jumping from detection straight to the
 editor silently discards every detected field.
 
 Pass `getsign_detect_placeholders_ai`'s `data.placeholders` through to
-`getsign_save_placeholders` **unmodified** except for `field_assignments`. Never
+`getsign_save_document_configuration` **unmodified** except for `field_assignments`. Never
 hand-author `x`/`y`/`width`/`height` — the save route accepts a malformed
 placeholder without complaint, and it then fails to render and fails to resolve
 a signer.
 
 Keep `edit_template` on `getsign_get_document_url(action="edit")` consistent with
-`is_template_update` on `getsign_save_placeholders`. Both default to
+`is_template_update` on `getsign_save_document_configuration`. Both default to
 template-level, which propagates to every item using that template; pass `false`
 on both only when the user explicitly wants the change confined to one item.
 
 If the document has fields for more than one signer, call the save tool once per
 signer with only that signer's placeholders — not the full detected array with a
 new column each time.
+
+When two or more people must sign in a specific sequence (CISO first, then CFO),
+call `getsign_save_document_configuration` `action=signing_order` after
+`getsign_get_signer_data` and before send.
+Do not bounce the user into the PDF editor just to set order. Skip this for a
+single signer.
 
 ## Steps
 
@@ -148,15 +156,19 @@ new column each time.
    - failures: Requires GETSIGN_APPLICATION_URL and a connected user session. Rejects an unknown action, both ID shapes, neither ID shape, and edit_template on preview. If no item document exists, attach or generate one first.
 6. `getsign_get_signer_data`
    - requires `envelope_id`, `item_id`
-   - next `getsign_send_signature_request`, `getsign_get_document_url`
-7. `getsign_send_signature_request`
+   - next `getsign_save_document_configuration`, `getsign_send_signature_request`, `getsign_get_document_url`
+7. `getsign_save_document_configuration`
+   - requires `action=placeholders or action=signing_order`, `placeholders (action=placeholders)`, `envelope_id + item_id + file_id or template_id (placeholders)`, `envelope_id + item_id (signing_order)`, `optional field_assignments / ordered_signers / is_template_update`
+   - next `getsign_monday_item`, `getsign_get_document_url`, `getsign_get_signer_data`
+   - failures: action=placeholders: pass one ID shape, not both. merge=True fetches current fields first. field_assignments[].placeholder_id must match detect ids. assignee_column_type must be email/people/mirror-email-column — take ids from getsign_monday_item's signer_columns (or this tool's response when unassigned). Always call getsign_detect_placeholders_ai first and pass its data.placeholders through — hand-typed coordinates are accepted with no error but silently fail to render in the editor and fail to resolve a signer. action=signing_order: fails if no signers are mapped yet, if ordered_signers does not match every mapped signer, if only one signer is mapped, or if signing has already started. Reset first with getsign_reset_signing_process if you need to change order mid-flight.
+8. `getsign_send_signature_request`
    - requires `envelope_id`, `item_id`
    - next `getsign_status`, `getsign_status`, `getsign_get_signer_data`
    - failures: CONFIRMATION_REQUIRED: show summary_text, then re-call with confirm=true and confirmation_token (same params). INVALID_CONFIRMATION_TOKEN: start over without confirm. MISSING_SIGNATURE_FIELDS: response includes next_tool=getsign_get_document_url with action=edit — call it and share the editor URL.
-8. `getsign_status`
+9. `getsign_status`
    - requires `envelope_id+item_id for history, or board_id for board actions`
    - next `getsign_download_signed_documents`, `getsign_generate_signing_link`
-9. `getsign_download_signed_documents`
+10. `getsign_download_signed_documents`
    - requires `envelope_id`, `item_id`
    - next `getsign_status`
    - failures: Fails if signing is not complete, no signed documents exist, or the signed snapshot is not ready yet. Links expire quickly and must not be shared publicly.

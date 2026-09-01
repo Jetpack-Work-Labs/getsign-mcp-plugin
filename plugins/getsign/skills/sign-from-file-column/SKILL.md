@@ -14,8 +14,8 @@ allowed-tools:
   - mcp__getsign__getsign_list_envelope_documents
   - mcp__plugin_getsign_getsign__getsign_detect_placeholders_ai
   - mcp__getsign__getsign_detect_placeholders_ai
-  - mcp__plugin_getsign_getsign__getsign_save_placeholders
-  - mcp__getsign__getsign_save_placeholders
+  - mcp__plugin_getsign_getsign__getsign_save_document_configuration
+  - mcp__getsign__getsign_save_document_configuration
   - mcp__plugin_getsign_getsign__getsign_get_document_url
   - mcp__getsign__getsign_get_document_url
   - mcp__plugin_getsign_getsign__getsign_send_signature_request
@@ -92,13 +92,13 @@ not "upload it through a tool".
 5. `getsign_detect_placeholders_ai`
    - **item-level — pass `envelope_id` (workflow id) *and* `item_id`.** A file-column document can carry a synthetic monday asset id with no GetSign storage key yet, and both ids are what trigger ingest; without `envelope_id` detection fails with `File not found or has no storage key`, which reads like a missing file and is not one. There is no template to detect against on this path.
    - requires `file_id`, `envelope_id (workflow id) + item_id for item / useFileColumn docs`, `optional board_id`, `optional template_id`, `optional force`
-   - next `getsign_monday_item`, `getsign_save_placeholders`, `getsign_get_document_url`
-   - failures: Requires a connected sender session and a non-block PDF file. For item / useFileColumn docs always pass envelope_id (workflow id) + item_id so the tool can ingest the Monday asset into GetSign before detect; missing envelope_id skips ingest and can yield 'File not found or has no storage key'. AI_DETECTION_ALREADY_DONE: ask the user before force=true. Detection can take up to a few minutes; increase timeout_seconds if needed. Block-based templates are not supported. Detection only returns suggested fields — call getsign_save_placeholders to actually save them; nothing is persisted to the document until then. This is the required first step before any API field placement — never hand-author a placeholders array from guessed coordinates and pass it straight to getsign_save_placeholders; the save route accepts malformed coordinates without error, but the field then fails to render in the editor and fails to resolve a signer in getsign_get_signer_data. If the user wants manual control, use the editor instead of this tool.
-6. `getsign_save_placeholders`
+   - next `getsign_monday_item`, `getsign_save_document_configuration`, `getsign_get_document_url`
+   - failures: Requires a connected sender session and a non-block PDF file. For item / useFileColumn docs always pass envelope_id (workflow id) + item_id so the tool can ingest the Monday asset into GetSign before detect; missing envelope_id skips ingest and can yield 'File not found or has no storage key'. AI_DETECTION_ALREADY_DONE: ask the user before force=true. Detection can take up to a few minutes; increase timeout_seconds if needed. Block-based templates are not supported. Detection only returns suggested fields — call getsign_save_document_configuration action=placeholders to actually save them; nothing is persisted to the document until then. This is the required first step before any API field placement — never hand-author a placeholders array from guessed coordinates and pass it straight to getsign_save_document_configuration action=placeholders; the save route accepts malformed coordinates without error, but the field then fails to render in the editor and fails to resolve a signer in getsign_get_signer_data. If the user wants manual control, use the editor instead of this tool.
+6. `getsign_save_document_configuration`
    - **item-level — pass `is_template_update=false` explicitly.** This tool defaults to `true` (template-level), which is the right default elsewhere and the wrong one here: a stored document is the item's own file and has no shared template behind it. A template-scoped save is not rejected — the backend sees the file is not pinned to a template, quietly falls back to updating just that one file, takes the template signing-order branch, and answers `Template updated successfully` — so you end up telling the user their change propagated to a shared template that does not exist. Send `envelope_id` + `item_id` + `file_id`, never a `template_id`, and say plainly that the save applies to this item.
-   - requires `placeholders`, `envelope_id + item_id + file_id or template_id`, `optional field_assignments`, `optional is_template_update (item shape)`
+   - requires `action=placeholders or action=signing_order`, `placeholders (action=placeholders)`, `envelope_id + item_id + file_id or template_id (placeholders)`, `envelope_id + item_id (signing_order)`, `optional field_assignments / ordered_signers / is_template_update`
    - next `getsign_monday_item`, `getsign_get_document_url`, `getsign_get_signer_data`
-   - failures: Pass one ID shape, not both. merge=True fetches current fields first. field_assignments[].placeholder_id must match detect ids. assignee_column_type must be email/people/mirror-email-column — take ids from getsign_monday_item's signer_columns (or this tool's response when unassigned). Always call getsign_detect_placeholders_ai first and pass its data.placeholders through — hand-typed coordinates are accepted with no error but silently fail to render in the editor and fail to resolve a signer in getsign_get_signer_data (the wire shape has two coordinate conventions, formField.coordinates bottom-up vs. placeholder top-down, that this route does not cross-check). If there's no PDF to run detection on, or the user wants manual control, use the editor instead.
+   - failures: action=placeholders: pass one ID shape, not both. merge=True fetches current fields first. field_assignments[].placeholder_id must match detect ids. assignee_column_type must be email/people/mirror-email-column — take ids from getsign_monday_item's signer_columns (or this tool's response when unassigned). Always call getsign_detect_placeholders_ai first and pass its data.placeholders through — hand-typed coordinates are accepted with no error but silently fail to render in the editor and fail to resolve a signer. action=signing_order: fails if no signers are mapped yet, if ordered_signers does not match every mapped signer, if only one signer is mapped, or if signing has already started. Reset first with getsign_reset_signing_process if you need to change order mid-flight.
 7. `getsign_get_document_url`
    - **item-level — `action=edit` with `envelope_id` + `item_id` and `edit_template=false`**, matching the save above. The two scope flags must agree, or the review opens on a different scope than the one you saved. State to the user that the editor is open on this item's document, not on a template shared with other items.
    - requires `action=edit or action=preview`, `envelope_id + item_id, or template_id + file_id`, `optional file_id on item`, `optional edit_template only for action=edit`
@@ -124,7 +124,7 @@ detection fails with `File not found or has no storage key` — which reads like
 missing file and is not one.
 
 **Detection saves nothing.** It returns coordinates; it does not persist them.
-Follow it with `getsign_save_placeholders` every time, passing
+Follow it with `getsign_save_document_configuration` `action=placeholders` every time, passing
 `data.placeholders` through **exactly as returned** — the only thing you add is
 `field_assignments`. Never hand-author or adjust those objects. Each placeholder
 carries two coordinate systems that the save route does not cross-check, so a
@@ -132,13 +132,13 @@ hand-typed one is accepted with no error and then fails to render in the editor
 and fails to resolve a signer.
 
 **Everything on this path is item-level — say so out loud.** This reverses the
-usual default. `getsign_save_placeholders` defaults to `is_template_update=true`
+usual default. `getsign_save_document_configuration` defaults to `is_template_update=true`
 and `getsign_get_document_url(action="edit")` defaults to `edit_template=true`,
 which is right when a shared template is behind the document and wrong here: a
 file-column document is that item's own file. So on this path:
 
 - `getsign_detect_placeholders_ai` — `envelope_id` + `item_id`.
-- `getsign_save_placeholders` — `envelope_id` + `item_id` + `file_id`, and
+- `getsign_save_document_configuration` — `action=placeholders`, `envelope_id` + `item_id` + `file_id`, and
   `is_template_update=false` **explicitly**. Never a `template_id`.
 - `getsign_get_document_url` — `action=edit` with `envelope_id` + `item_id` and
   `edit_template=false`, matching the save.
